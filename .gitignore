@@ -2,3 +2,4 @@
 jobs.json
 .jobs.json.lock
 check.log
+__pycache__/
