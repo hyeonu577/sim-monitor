@@ -74,7 +74,7 @@ The `notified_stale` flag is set to `true` after the first stale notification em
 
 A single master healthcheck monitors whether the monitor itself is running. It is stored in `.env` as `MASTER_HEALTHCHECK_ID`. If this key is absent or empty, the monitor creates a new master healthcheck named `"sim-monitor-master"` on the first run and writes the UUID back to `.env`.
 
-The master healthcheck receives a success ping at the end of every cycle, regardless of individual job health. Its purpose is to detect when `check.py` itself stops running — if cron breaks, the script crashes on startup, or Hercules goes down, the master healthcheck will miss pings and healthchecks.io will alert you.
+The master healthcheck receives a success ping at the end of every successful cycle. If `check.py` encounters an unhandled error (e.g., can't read `jobs.json`, can't parse `.env`), it sends a failure ping to the master before exiting. If the script never runs at all (cron breaks, Hercules goes down), the master misses pings and healthchecks.io alerts you via the grace period.
 
 ## Monitor Logic (`check.py`)
 
@@ -89,6 +89,8 @@ Each cron cycle:
    - **Evaluate state** (see state matrix below).
 5. Write updated `jobs.json`
 6. Send success ping to master healthcheck (confirms the monitor itself ran successfully).
+
+The entire main loop is wrapped in a try/except. If an unhandled exception occurs, send a failure ping to the master healthcheck (with the error message in the request body) before re-raising.
 
 ### State Matrix
 
