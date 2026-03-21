@@ -72,9 +72,9 @@ The `notified_stale` flag is set to `true` after the first stale notification em
 
 ## Master Healthcheck
 
-A single master healthcheck represents the overall health of all monitored simulations. It is stored in `.env` as `MASTER_HEALTHCHECK_ID`. If this key is absent or empty, the monitor creates a new master healthcheck named `"sim-monitor-master"` on the first run and writes the UUID back to `.env`.
+A single master healthcheck monitors whether the monitor itself is running. It is stored in `.env` as `MASTER_HEALTHCHECK_ID`. If this key is absent or empty, the monitor creates a new master healthcheck named `"sim-monitor-master"` on the first run and writes the UUID back to `.env`.
 
-The master healthcheck only receives a success ping when **every** job in the registry is healthy in that cycle. If any job is stale, crashed, or if any error occurred during the cycle (e.g., SSH failure, API failure), the master does not get pinged — healthchecks.io's grace period will trigger an alert. If `jobs.json` is empty (no jobs to monitor), the master receives a success ping (nothing is wrong).
+The master healthcheck receives a success ping at the end of every cycle, regardless of individual job health. Its purpose is to detect when `check.py` itself stops running — if cron breaks, the script crashes on startup, or Hercules goes down, the master healthcheck will miss pings and healthchecks.io will alert you.
 
 ## Monitor Logic (`check.py`)
 
@@ -83,13 +83,12 @@ Each cron cycle:
 1. Read `.env` for `HEALTHCHECK_API_KEY` and `MASTER_HEALTHCHECK_ID` (manual line parsing, no external dependency needed — format is `KEY=VALUE` per line)
 2. If `MASTER_HEALTHCHECK_ID` is absent or empty, create the master healthcheck via the API (name=`"sim-monitor-master"`, timeout=300, grace=600) and write UUID back to `.env`
 3. Read `jobs.json`
-4. Track `all_healthy = true`
-5. For each job:
+4. For each job:
    - **Healthcheck creation:** If `healthcheck_id` is `null`, create a new check via `POST https://healthchecks.io/api/v3/checks/` with `timeout=300` (5 min), `grace=600` (10 min), and `name` from the job entry. Write the returned UUID back.
    - **Query PBS:** Run `ssh happiness qstat -f <job_id>` to get job state. A non-zero exit code means the job has left the queue ("Disappeared"). Parse `job_state` from the output. States `H` (held), `E` (exiting), `S` (suspended), `W` (waiting), `T` (moving) are treated the same as `Q` (send success ping, no staleness check).
-   - **Evaluate state** (see state matrix below). If any job is stale or crashed, set `all_healthy = false`.
-6. Write updated `jobs.json`
-7. If `all_healthy` is true, send success ping to master healthcheck. Otherwise, do not ping (or send failure ping).
+   - **Evaluate state** (see state matrix below).
+5. Write updated `jobs.json`
+6. Send success ping to master healthcheck (confirms the monitor itself ran successfully).
 
 ### State Matrix
 
