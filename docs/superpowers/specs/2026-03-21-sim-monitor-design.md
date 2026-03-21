@@ -63,18 +63,21 @@ A JSON array where each entry represents a monitored simulation:
 | `output_pattern` | string | Glob pattern for output files/dirs (e.g., `DD*`) |
 | `stale_timeout` | int | Minutes without new output before considered stale |
 | `healthcheck_id` | string or null | UUID from healthchecks.io, auto-populated on first run |
+| `notified_stale` | bool | Whether a stale notification has already been sent (suppresses repeats) |
 
 When `healthcheck_id` is `null`, the monitor creates a new healthcheck via the API and writes the UUID back.
+
+The `notified_stale` flag is set to `true` after the first stale notification email. It is cleared back to `false` when fresh output is detected. This prevents sending a stale email every 5 minutes. Failure pings to healthchecks.io are still sent each cycle regardless.
 
 ## Monitor Logic (`check.py`)
 
 Each cron cycle:
 
-1. Read `.env` for `HEALTHCHECK_API_KEY`
+1. Read `.env` for `HEALTHCHECK_API_KEY` (manual line parsing, no external dependency needed — format is `KEY=VALUE` per line)
 2. Read `jobs.json`
 3. For each job:
    - **Healthcheck creation:** If `healthcheck_id` is `null`, create a new check via `POST https://healthchecks.io/api/v3/checks/` with `timeout=300` (5 min), `grace=600` (10 min), and `name` from the job entry. Write the returned UUID back.
-   - **Query PBS:** Run `ssh happiness qstat -f <job_id>` to get job state.
+   - **Query PBS:** Run `ssh happiness qstat -f <job_id>` to get job state. A non-zero exit code means the job has left the queue ("Disappeared"). Parse `job_state` from the output. States `H` (held), `E` (exiting), `S` (suspended), `W` (waiting), `T` (moving) are treated the same as `Q` (send success ping, no staleness check).
    - **Evaluate state** (see state matrix below).
 4. Write updated `jobs.json`
 
@@ -82,11 +85,11 @@ Each cron cycle:
 
 | qstat state | Output fresh? | Action |
 |---|---|---|
-| Running (R) | Yes | Send success ping to healthchecks.io |
-| Running (R) | Stale (mtime > stale_timeout) | Send failure ping + stale notification email |
+| Running (R) | Yes | Send success ping to healthchecks.io; clear `notified_stale` to false |
+| Running (R) | Stale (mtime > stale_timeout) | Send failure ping; send stale email only if `notified_stale` is false, then set it to true |
 | Queued (Q) | N/A | Send success ping (waiting is normal) |
-| Disappeared | `SUCCESS` marker exists | Send success ping + completed email, remove from `jobs.json` |
-| Disappeared | No `SUCCESS` marker | Send failure ping + killed/crashed email, remove from `jobs.json` |
+| Disappeared | `SUCCESS` marker exists | Remove from `jobs.json` first, then send success ping + completed email |
+| Disappeared | No `SUCCESS` marker | Remove from `jobs.json` first, then send failure ping + killed/crashed email |
 
 ### Staleness Detection
 
@@ -96,9 +99,10 @@ Each cron cycle:
 
 ### Healthchecks.io Integration
 
-- **Create check:** `POST https://healthchecks.io/api/v3/checks/` with header `X-Api-Key: <key>`, body `{"name": "<name>", "timeout": 300, "grace": 600}`
+- **Create check:** `POST https://healthchecks.io/api/v3/checks/` with headers `X-Api-Key: <key>` and `Content-Type: application/json`, body `{"name": "<name>", "timeout": 300, "grace": 600}`
 - **Success ping:** `GET https://hc-ping.com/<healthcheck_id>`
 - **Failure ping:** `GET https://hc-ping.com/<healthcheck_id>/fail`
+- All HTTP requests use a 10-second timeout to prevent hanging.
 
 ### Notifications via `~/notify.py`
 
@@ -119,7 +123,7 @@ python ~/sim-monitor/add_job.py \
   --stale-timeout 60
 ```
 
-Appends a new entry to `jobs.json` with `healthcheck_id: null`. Also supports `--remove <name>` to manually remove a job.
+Appends a new entry to `jobs.json` with `healthcheck_id: null` and `notified_stale: false`. Also supports `--remove <name>` to manually remove a job from `jobs.json` (the healthchecks.io check is left as-is; it will auto-pause after missing pings).
 
 ## SUCCESS Marker Convention
 
@@ -156,7 +160,8 @@ Runs on Hercules every 5 minutes. Uses the `claude` conda environment for depend
 - If `ssh happiness qstat` fails (network issue), skip the job for this cycle and log the error. Do not send failure ping (transient issue, not a job failure).
 - If healthchecks.io API call fails, log the error and continue. The missed ping will trigger healthchecks.io's own grace period alerting.
 - If `jobs.json` is empty, exit cleanly.
-- File locking on `jobs.json` to prevent race conditions between cron and `add_job.py`.
+- File locking on `jobs.json` via `fcntl.flock()` with `LOCK_EX` on a sidecar `.jobs.json.lock` file, held for the entire read-modify-write cycle. Both `check.py` and `add_job.py` use this lock.
+- `notify.py` calls `sys.exit(1)` on email failure. The monitor catches `subprocess` non-zero exits from `notify.py` and logs the error without aborting the cycle for remaining jobs.
 
 ## Dependencies
 
