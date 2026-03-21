@@ -258,15 +258,15 @@ def process_job(job, api_key):
         )
         if is_stale:
             log.warning("Job %s is stale: %s", name, detail)
-            hc_ping(hc_id, "fail")
+            stale_reason = (
+                f"Job {name} ({job_id}) is running but output is stale.\n"
+                f"{detail}\n"
+                f"Stale timeout: {job['stale_timeout']} minutes\n"
+                f"Output dir: {job['output_dir']}"
+            )
+            hc_ping(hc_id, "fail", stale_reason)
             if not job.get("notified_stale"):
-                notify(
-                    f"Job {name} stale",
-                    f"Job {name} ({job_id}) is running but output is stale.\n"
-                    f"{detail}\n"
-                    f"Stale timeout: {job['stale_timeout']} minutes\n"
-                    f"Output dir: {job['output_dir']}",
-                )
+                notify(f"Job {name} stale", stale_reason)
                 job["notified_stale"] = True
         else:
             log.info("Job %s is running and healthy: %s", name, detail)
@@ -331,7 +331,8 @@ def main():
 
         # Send pings/emails for disappeared jobs (jobs.json already updated above)
         for info in pending_notifications:
-            hc_ping(info["hc_id"], "success" if info["success"] else "fail")
+            status = "success" if info["success"] else "fail"
+            hc_ping(info["hc_id"], status, info["message"])
             notify(info["subject"], info["message"])
 
         # Master healthcheck ping
