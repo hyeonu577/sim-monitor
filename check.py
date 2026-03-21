@@ -134,7 +134,7 @@ def query_pbs(job_id):
         # Exit code 255 = SSH transport failure
         # Also check stderr for SSH-specific error messages
         stderr = result.stderr.lower()
-        if result.returncode == 255 or "connection refused" in stderr or "no route to host" in stderr or "could not resolve" in stderr:
+        if result.returncode == 255 or "connection refused" in stderr or "no route to host" in stderr or "could not resolve" in stderr or "network is unreachable" in stderr or "permission denied" in stderr or "host key verification failed" in stderr:
             raise SSHError(f"SSH failed (exit {result.returncode}): {result.stderr.strip()}")
         # Otherwise, qstat itself failed — job has left the queue
         return None, {}
@@ -191,7 +191,13 @@ PASSIVE_STATES = {"Q", "H", "E", "S", "W", "T"}
 
 
 def process_job(job, api_key):
-    """Process a single job. Returns (keep_in_registry, updated_job).
+    """Process a single job. Returns (keep_in_registry, updated_job, disappearance_info).
+
+    disappearance_info is None when keep_in_registry is True.
+    When keep_in_registry is False, disappearance_info is a dict with keys:
+      'success' (bool), 'hc_id' (str), 'subject' (str), 'message' (str).
+    Pings and emails for disappeared jobs are NOT sent here; the caller must
+    write jobs.json first, then use disappearance_info to notify.
 
     Raises subprocess.TimeoutExpired or SSHError if qstat SSH fails.
     """
@@ -211,30 +217,37 @@ def process_job(job, api_key):
     state, info = query_pbs(job_id)
 
     if state is None:
-        # Job disappeared from qstat
+        # Job disappeared from qstat — return details without notifying yet.
+        # The caller must write jobs.json BEFORE sending pings/emails.
         if check_success_marker(job["output_dir"]):
             log.info("Job %s completed successfully", name)
-            hc_ping(hc_id, "success")
-            notify(
-                f"Job {name} completed",
-                f"Job {name} ({job_id}) completed successfully.\n"
-                f"Output dir: {job['output_dir']}",
-            )
+            disappearance_info = {
+                "success": True,
+                "hc_id": hc_id,
+                "subject": f"Job {name} completed",
+                "message": (
+                    f"Job {name} ({job_id}) completed successfully.\n"
+                    f"Output dir: {job['output_dir']}"
+                ),
+            }
         else:
             log.warning("Job %s disappeared without SUCCESS marker", name)
-            hc_ping(hc_id, "fail")
-            notify(
-                f"Job {name} killed/crashed",
-                f"Job {name} ({job_id}) disappeared from qstat without a SUCCESS marker.\n"
-                f"Output dir: {job['output_dir']}",
-            )
-        return False, job  # Remove from registry
+            disappearance_info = {
+                "success": False,
+                "hc_id": hc_id,
+                "subject": f"Job {name} killed/crashed",
+                "message": (
+                    f"Job {name} ({job_id}) disappeared from qstat without a SUCCESS marker.\n"
+                    f"Output dir: {job['output_dir']}"
+                ),
+            }
+        return False, job, disappearance_info  # Remove from registry
 
     if state in PASSIVE_STATES:
         # Queued or other passive state — job is fine
         log.info("Job %s in state %s, sending success ping", name, state)
         hc_ping(hc_id, "success")
-        return True, job
+        return True, job, None
 
     if state == "R":
         # Running — check staleness
@@ -257,12 +270,12 @@ def process_job(job, api_key):
             log.info("Job %s is running and healthy: %s", name, detail)
             hc_ping(hc_id, "success")
             job["notified_stale"] = False
-        return True, job
+        return True, job, None
 
     # Unknown state — treat as passive
     log.info("Job %s in unknown state %s, sending success ping", name, state)
     hc_ping(hc_id, "success")
-    return True, job
+    return True, job, None
 
 
 def main():
@@ -295,24 +308,37 @@ def main():
                 return
 
             ssh_failed = False
-            updated_jobs = []
+            updated_jobs = list(jobs)  # Start with all jobs; remove disappeared ones below
+            pending_notifications = []  # [(disappearance_info), ...] to send after write
             for job in jobs:
                 try:
-                    keep, updated_job = process_job(job, api_key)
+                    keep, updated_job, disappearance_info = process_job(job, api_key)
                     if keep:
-                        updated_jobs.append(updated_job)
+                        # Replace in-place to capture any mutations (e.g. notified_stale)
+                        idx = updated_jobs.index(job)
+                        updated_jobs[idx] = updated_job
+                    else:
+                        # Remove disappeared job from list, write BEFORE notifying
+                        updated_jobs.remove(job)
+                        write_jobs(updated_jobs)
+                        pending_notifications.append(disappearance_info)
                 except SSHError as e:
                     log.error("SSH failure querying job %s: %s", job["name"], e)
                     ssh_failed = True
-                    updated_jobs.append(job)  # Keep job, skip this cycle
+                    # Keep job as-is (already in updated_jobs)
                 except subprocess.TimeoutExpired:
                     log.error("SSH timeout querying job %s", job["name"])
                     ssh_failed = True
-                    updated_jobs.append(job)
+                    # Keep job as-is (already in updated_jobs)
 
             write_jobs(updated_jobs)
         finally:
             release_lock(lock_fh)
+
+        # Send pings/emails for disappeared jobs (jobs.json already updated above)
+        for info in pending_notifications:
+            hc_ping(info["hc_id"], "success" if info["success"] else "fail")
+            notify(info["subject"], info["message"])
 
         # Master healthcheck ping
         if ssh_failed:
