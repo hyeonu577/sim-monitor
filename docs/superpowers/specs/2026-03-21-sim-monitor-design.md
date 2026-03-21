@@ -168,7 +168,7 @@ Runs on Hercules every 5 minutes. Uses the `claude` conda environment for depend
 
 ## Error Handling
 
-- If `ssh happiness qstat` fails (network issue), skip the job for this cycle and log the error. Do not send failure ping (transient issue, not a job failure).
+- If `ssh happiness qstat` fails (network issue), skip the job for this cycle and log the error. Do not send per-job failure ping (transient issue, not a job failure). Send failure ping to the master healthcheck (the monitor cannot do its job if SSH is broken).
 - If healthchecks.io API call fails, log the error and continue. The missed ping will trigger healthchecks.io's own grace period alerting.
 - If `jobs.json` is empty, exit cleanly.
 - File locking on `jobs.json` via `fcntl.flock()` with `LOCK_EX` on a sidecar `.jobs.json.lock` file, held for the entire read-modify-write cycle. Both `check.py` and `add_job.py` use this lock.
