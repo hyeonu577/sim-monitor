@@ -68,6 +68,8 @@ def hc_create_check(api_key, name):
     # Extract UUID from ping_url: "https://hc-ping.com/<uuid>"
     ping_url = data.get("ping_url", "")
     uuid = ping_url.rstrip("/").split("/")[-1]
+    if not uuid:
+        raise ValueError(f"Failed to extract UUID from healthchecks.io response: {data}")
     return uuid
 
 
@@ -298,40 +300,32 @@ def main():
             log.info("Created master healthcheck: %s", master_hc_id)
 
         # Read and process jobs
+        ssh_failed = False
+        pending_notifications = []
         lock_fh = acquire_lock()
         try:
             jobs = read_jobs()
-            if not jobs:
+            if jobs:
+                updated_jobs = []
+                for job in jobs:
+                    try:
+                        keep, updated_job, disappearance_info = process_job(job, api_key)
+                        if keep:
+                            updated_jobs.append(updated_job)
+                        else:
+                            pending_notifications.append(disappearance_info)
+                    except SSHError as e:
+                        log.error("SSH failure querying job %s: %s", job["name"], e)
+                        ssh_failed = True
+                        updated_jobs.append(job)
+                    except subprocess.TimeoutExpired:
+                        log.error("SSH timeout querying job %s", job["name"])
+                        ssh_failed = True
+                        updated_jobs.append(job)
+
+                write_jobs(updated_jobs)
+            else:
                 log.info("No jobs to monitor")
-                release_lock(lock_fh)
-                hc_ping(master_hc_id, "success")
-                return
-
-            ssh_failed = False
-            updated_jobs = list(jobs)  # Start with all jobs; remove disappeared ones below
-            pending_notifications = []  # [(disappearance_info), ...] to send after write
-            for job in jobs:
-                try:
-                    keep, updated_job, disappearance_info = process_job(job, api_key)
-                    if keep:
-                        # Replace in-place to capture any mutations (e.g. notified_stale)
-                        idx = updated_jobs.index(job)
-                        updated_jobs[idx] = updated_job
-                    else:
-                        # Remove disappeared job from list, write BEFORE notifying
-                        updated_jobs.remove(job)
-                        write_jobs(updated_jobs)
-                        pending_notifications.append(disappearance_info)
-                except SSHError as e:
-                    log.error("SSH failure querying job %s: %s", job["name"], e)
-                    ssh_failed = True
-                    # Keep job as-is (already in updated_jobs)
-                except subprocess.TimeoutExpired:
-                    log.error("SSH timeout querying job %s", job["name"])
-                    ssh_failed = True
-                    # Keep job as-is (already in updated_jobs)
-
-            write_jobs(updated_jobs)
         finally:
             release_lock(lock_fh)
 
