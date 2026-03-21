@@ -60,7 +60,7 @@ def hc_create_check(api_key, name):
             "X-Api-Key": api_key,
             "Content-Type": "application/json",
         },
-        json={"name": name, "timeout": 300, "grace": 600},
+        json={"name": name, "timeout": 300, "grace": 720},
         timeout=HC_TIMEOUT,
     )
     resp.raise_for_status()
