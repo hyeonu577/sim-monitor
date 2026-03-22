@@ -51,7 +51,7 @@ Add `touch $OUTPUT_DIR/SUCCESS` as the last line of your simulation run scripts.
 ### Add a job to monitor
 
 ```bash
-python ~/sim-monitor/add_job.py add \
+python /path/to/sim-monitor/add_job.py add \
   --job 12345.pbs-host \
   --name my_sim \
   --output-dir /path/to/project/run_01/ \
@@ -65,19 +65,19 @@ python ~/sim-monitor/add_job.py add \
 ### List available notification channels
 
 ```bash
-python ~/sim-monitor/add_job.py list-channels
+python /path/to/sim-monitor/add_job.py list-channels
 ```
 
 ### List monitored jobs
 
 ```bash
-python ~/sim-monitor/add_job.py list
+python /path/to/sim-monitor/add_job.py list
 ```
 
 ### Remove a job
 
 ```bash
-python ~/sim-monitor/add_job.py remove my_sim
+python /path/to/sim-monitor/add_job.py remove my_sim
 ```
 
 ## How it works
