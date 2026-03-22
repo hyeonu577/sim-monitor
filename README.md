@@ -22,7 +22,7 @@ Cron-based PBS simulation monitor with [healthchecks.io](https://healthchecks.io
 
 2. Install the cron entry:
    ```
-   */5 * * * * /home/hyeonu/anaconda3/envs/claude/bin/python /home/hyeonu/sim-monitor/check.py >> /home/hyeonu/sim-monitor/check.log 2>&1
+   */5 * * * * /path/to/python /path/to/sim-monitor/check.py >> /path/to/sim-monitor/check.log 2>&1
    ```
 
 3. Add `touch $OUTPUT_DIR/SUCCESS` as the last line of your simulation run scripts.
@@ -35,7 +35,7 @@ Cron-based PBS simulation monitor with [healthchecks.io](https://healthchecks.io
 python ~/sim-monitor/add_job.py add \
   --job 12345.happiness \
   --name my_sim \
-  --output-dir /data1/hyeonu/project/run_01/ \
+  --output-dir /path/to/project/run_01/ \
   --output-pattern "DD*" \
   --stale-timeout 60 \
   --channels "*"
