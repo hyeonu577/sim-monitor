@@ -166,7 +166,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_add = sub.add_parser("add", help="Add a job to monitor")
-    p_add.add_argument("--job", required=True, help="PBS job ID (e.g., 12345.happiness)")
+    p_add.add_argument("--job", required=True, help="PBS job ID (e.g., 12345.pbs-host)")
     p_add.add_argument("--name", required=True, help="Human-readable job name")
     p_add.add_argument("--output-dir", required=True, help="Path to simulation output directory")
     p_add.add_argument("--output-pattern", required=True, help="Glob pattern for output files (e.g., DD*)")

@@ -4,7 +4,7 @@ Cron-based PBS simulation monitor with [healthchecks.io](https://healthchecks.io
 
 ## What it does
 
-- Checks PBS job status via `ssh happiness qstat` every 5 minutes
+- Checks PBS job status via SSH every 5 minutes
 - Detects stale simulations (no new output files within a timeout)
 - Detects jobs that disappear from the queue (completed or crashed)
 - Sends per-job health check pings to healthchecks.io
@@ -13,10 +13,11 @@ Cron-based PBS simulation monitor with [healthchecks.io](https://healthchecks.io
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and fill in your healthchecks.io API key:
+1. Copy `.env.example` to `.env` and fill in your values:
    ```
    HEALTHCHECK_API_KEY=your-actual-key
    MASTER_HEALTHCHECK_ID=
+   SSH_HOST=your-pbs-host
    ```
    `MASTER_HEALTHCHECK_ID` is auto-populated on first run.
 
@@ -33,7 +34,7 @@ Cron-based PBS simulation monitor with [healthchecks.io](https://healthchecks.io
 
 ```bash
 python ~/sim-monitor/add_job.py add \
-  --job 12345.happiness \
+  --job 12345.pbs-host \
   --name my_sim \
   --output-dir /path/to/project/run_01/ \
   --output-pattern "DD*" \
@@ -69,7 +70,7 @@ Each cron cycle, `check.py`:
 2. Creates the master healthcheck if it doesn't exist yet
 3. For each job in `jobs.json`:
    - Creates a per-job healthcheck if needed
-   - Queries `qstat -f` via SSH to Happiness
+   - Queries `qstat -f` via SSH to `SSH_HOST`
    - Evaluates job state:
 
 | State | Output | Action |
@@ -86,5 +87,5 @@ Each cron cycle, `check.py`:
 
 - Python 3 (`claude` conda env)
 - `requests`
-- SSH access to Happiness
+- SSH access to PBS host (configured via `SSH_HOST` in `.env`)
 - `~/notify.py`

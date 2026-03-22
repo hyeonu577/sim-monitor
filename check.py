@@ -137,13 +137,13 @@ class SSHError(Exception):
     pass
 
 
-def query_pbs(job_id):
+def query_pbs(job_id, ssh_host):
     """Query PBS job state via SSH.
 
     Returns (state, info_dict) or (None, {}) if job disappeared.
     Raises SSHError if SSH connection itself fails.
     """
-    cmd = ["ssh", "happiness", f"qstat -f {job_id}"]
+    cmd = ["ssh", ssh_host, f"qstat -f {job_id}"]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
     if result.returncode != 0:
@@ -206,7 +206,7 @@ def notify(subject, message):
 PASSIVE_STATES = {"Q", "H", "E", "S", "W", "T"}
 
 
-def process_job(job, api_key):
+def process_job(job, api_key, ssh_host):
     """Process a single job. Returns (keep_in_registry, updated_job, disappearance_info).
 
     disappearance_info is None when keep_in_registry is True.
@@ -230,7 +230,7 @@ def process_job(job, api_key):
     hc_id = job["healthcheck_id"]
 
     # Query PBS
-    state, info = query_pbs(job_id)
+    state, info = query_pbs(job_id, ssh_host)
 
     if state is None:
         # Job disappeared from qstat — return details without notifying yet.
@@ -304,6 +304,11 @@ def main():
             log.error("HEALTHCHECK_API_KEY not found in .env")
             sys.exit(1)
 
+        ssh_host = env.get("SSH_HOST")
+        if not ssh_host:
+            log.error("SSH_HOST not found in .env")
+            sys.exit(1)
+
         # Ensure master healthcheck exists
         master_hc_id = env.get("MASTER_HEALTHCHECK_ID")
         if not master_hc_id:
@@ -323,7 +328,7 @@ def main():
                 updated_jobs = []
                 for job in jobs:
                     try:
-                        keep, updated_job, disappearance_info = process_job(job, api_key)
+                        keep, updated_job, disappearance_info = process_job(job, api_key, ssh_host)
                         if keep:
                             updated_jobs.append(updated_job)
                         else:
@@ -353,7 +358,7 @@ def main():
         # Master healthcheck ping
         if ssh_failed:
             log.warning("SSH failure detected, sending master failure ping")
-            hc_ping(master_hc_id, "fail", "SSH to happiness failed during this cycle")
+            hc_ping(master_hc_id, "fail", f"SSH to {ssh_host} failed during this cycle")
         else:
             hc_ping(master_hc_id, "success")
 
