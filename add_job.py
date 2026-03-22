@@ -7,9 +7,15 @@ import json
 import os
 import sys
 
+import requests
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 JOBS_PATH = os.path.join(SCRIPT_DIR, "jobs.json")
 LOCK_PATH = os.path.join(SCRIPT_DIR, ".jobs.json.lock")
+ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
+
+HC_API_URL = "https://healthchecks.io/api/v3/checks/"
+HC_TIMEOUT = 10
 
 
 def acquire_lock():
@@ -58,6 +64,7 @@ def add_job(args):
             "stale_timeout": args.stale_timeout,
             "healthcheck_id": None,
             "notified_stale": False,
+            "channels": args.channels,
         }
         jobs.append(job)
         write_jobs(jobs)
@@ -66,19 +73,58 @@ def add_job(args):
         release_lock(lock_fh)
 
 
+def read_env():
+    """Parse .env file, return dict of KEY=VALUE pairs."""
+    env = {}
+    if not os.path.exists(ENV_PATH):
+        return env
+    with open(ENV_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            env[key.strip()] = value.strip()
+    return env
+
+
+def hc_delete(api_key, uuid):
+    """Delete a healthcheck from healthchecks.io."""
+    try:
+        resp = requests.delete(
+            HC_API_URL + uuid,
+            headers={"X-Api-Key": api_key},
+            timeout=HC_TIMEOUT,
+        )
+        resp.raise_for_status()
+        print(f"Deleted healthcheck {uuid}")
+    except Exception as e:
+        print(f"Warning: failed to delete healthcheck {uuid}: {e}", file=sys.stderr)
+
+
 def remove_job(args):
     lock_fh = acquire_lock()
     try:
         jobs = read_jobs()
-        original_len = len(jobs)
-        jobs = [j for j in jobs if j["name"] != args.name]
-        if len(jobs) == original_len:
+        removed = [j for j in jobs if j["name"] == args.name]
+        remaining = [j for j in jobs if j["name"] != args.name]
+        if not removed:
             print(f"Error: no job with name '{args.name}' found", file=sys.stderr)
             sys.exit(1)
-        write_jobs(jobs)
+        write_jobs(remaining)
         print(f"Removed job '{args.name}'")
     finally:
         release_lock(lock_fh)
+
+    # Delete healthcheck after releasing lock
+    hc_id = removed[0].get("healthcheck_id")
+    if hc_id:
+        env = read_env()
+        api_key = env.get("HEALTHCHECK_API_KEY")
+        if api_key:
+            hc_delete(api_key, hc_id)
+        else:
+            print("Warning: HEALTHCHECK_API_KEY not found in .env, skipping healthcheck deletion", file=sys.stderr)
 
 
 def list_jobs(args):
@@ -105,6 +151,7 @@ def main():
     p_add.add_argument("--output-dir", required=True, help="Path to simulation output directory")
     p_add.add_argument("--output-pattern", required=True, help="Glob pattern for output files (e.g., DD*)")
     p_add.add_argument("--stale-timeout", type=int, required=True, help="Minutes without output before stale")
+    p_add.add_argument("--channels", default="*", help="Healthchecks.io notification channels (comma-separated UUIDs/names, or '*' for all)")
 
     p_rm = sub.add_parser("remove", help="Remove a job from monitoring")
     p_rm.add_argument("name", help="Job name to remove")
