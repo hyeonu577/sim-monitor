@@ -141,6 +141,26 @@ def list_jobs(args):
         release_lock(lock_fh)
 
 
+def list_channels(args):
+    env = read_env()
+    api_key = env.get("HEALTHCHECK_API_KEY")
+    if not api_key:
+        print("Error: HEALTHCHECK_API_KEY not found in .env", file=sys.stderr)
+        sys.exit(1)
+    resp = requests.get(
+        HC_API_URL.replace("/checks/", "/channels/"),
+        headers={"X-Api-Key": api_key},
+        timeout=HC_TIMEOUT,
+    )
+    resp.raise_for_status()
+    channels = resp.json().get("channels", [])
+    if not channels:
+        print("No notification channels configured on healthchecks.io.")
+        return
+    for ch in channels:
+        print(f"  {ch['name']:30s}  kind={ch['kind']:10s}  id={ch['id']}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Manage sim-monitor job registry.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -158,6 +178,8 @@ def main():
 
     sub.add_parser("list", help="List all monitored jobs")
 
+    sub.add_parser("list-channels", help="List available healthchecks.io notification channels")
+
     args = parser.parse_args()
 
     if args.command == "add":
@@ -166,6 +188,8 @@ def main():
         remove_job(args)
     elif args.command == "list":
         list_jobs(args)
+    elif args.command == "list-channels":
+        list_channels(args)
 
 
 if __name__ == "__main__":
