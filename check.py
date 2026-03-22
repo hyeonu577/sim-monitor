@@ -52,7 +52,7 @@ def write_env(env):
             f.write(f"{key}={value}\n")
 
 
-def hc_create_check(api_key, name):
+def hc_create_check(api_key, name, channels="*"):
     """Create a new healthcheck via the Management API. Returns the ping URL UUID."""
     resp = requests.post(
         HC_API_URL,
@@ -60,7 +60,7 @@ def hc_create_check(api_key, name):
             "X-Api-Key": api_key,
             "Content-Type": "application/json",
         },
-        json={"name": name, "timeout": 300, "grace": 720},
+        json={"name": name, "timeout": 300, "grace": 720, "channels": channels},
         timeout=HC_TIMEOUT,
     )
     resp.raise_for_status()
@@ -71,6 +71,20 @@ def hc_create_check(api_key, name):
     if not uuid:
         raise ValueError(f"Failed to extract UUID from healthchecks.io response: {data}")
     return uuid
+
+
+def hc_delete(api_key, uuid):
+    """Delete a healthcheck from healthchecks.io."""
+    try:
+        resp = requests.delete(
+            HC_API_URL + uuid,
+            headers={"X-Api-Key": api_key},
+            timeout=HC_TIMEOUT,
+        )
+        resp.raise_for_status()
+        log.info("Deleted healthcheck %s", uuid)
+    except Exception as e:
+        log.error("Failed to delete healthcheck %s: %s", uuid, e)
 
 
 def hc_ping(uuid, status="success", body=""):
@@ -209,7 +223,7 @@ def process_job(job, api_key):
     # Ensure healthcheck exists
     if not job.get("healthcheck_id"):
         log.info("Creating healthcheck for job %s", name)
-        uuid = hc_create_check(api_key, name)
+        uuid = hc_create_check(api_key, name, job.get("channels", "*"))
         job["healthcheck_id"] = uuid
         log.info("Created healthcheck %s for job %s", uuid, name)
 
@@ -334,6 +348,7 @@ def main():
             status = "success" if info["success"] else "fail"
             hc_ping(info["hc_id"], status, info["message"])
             notify(info["subject"], info["message"])
+            hc_delete(api_key, info["hc_id"])
 
         # Master healthcheck ping
         if ssh_failed:
