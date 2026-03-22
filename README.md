@@ -37,7 +37,16 @@ python ~/sim-monitor/add_job.py add \
   --name my_sim \
   --output-dir /data1/hyeonu/project/run_01/ \
   --output-pattern "DD*" \
-  --stale-timeout 60
+  --stale-timeout 60 \
+  --channels "*"
+```
+
+`--channels` specifies which healthchecks.io notification integrations to attach (default: `"*"` for all). Use comma-separated channel UUIDs or names, or `"*"` for all configured integrations.
+
+### List available notification channels
+
+```bash
+python ~/sim-monitor/add_job.py list-channels
 ```
 
 ### List monitored jobs
