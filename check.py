@@ -13,12 +13,12 @@ import traceback
 
 import requests
 
+from mailer import send_email
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
 JOBS_PATH = os.path.join(SCRIPT_DIR, "jobs.json")
 LOCK_PATH = os.path.join(SCRIPT_DIR, ".jobs.json.lock")
-NOTIFY_SCRIPT = os.path.expanduser("~/notify.py")
-
 HC_API_URL = "https://healthchecks.io/api/v3/checks/"
 HC_PING_URL = "https://hc-ping.com/"
 HC_TIMEOUT = 10  # seconds
@@ -188,25 +188,19 @@ def check_success_marker(output_dir):
     return os.path.exists(os.path.join(output_dir, "SUCCESS"))
 
 
-def notify(subject, message):
-    """Send email notification via ~/notify.py. Logs errors but does not raise."""
-    try:
-        result = subprocess.run(
-            [sys.executable, NOTIFY_SCRIPT, "-s", subject, "-m", message],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        if result.returncode != 0:
-            log.error("notify.py failed (exit %d): %s", result.returncode, result.stderr)
-    except Exception as e:
-        log.error("Failed to run notify.py: %s", e)
+def notify(subject, message, smtp_user, smtp_password, smtp_to):
+    """Send email notification. Logs errors but does not raise."""
+    if not all([smtp_user, smtp_password, smtp_to]):
+        log.warning("SMTP not configured, skipping email notification")
+        return
+    if not send_email(subject, message, smtp_user, smtp_password, smtp_to):
+        log.error("Email notification failed: %s", subject)
 
 
 PASSIVE_STATES = {"Q", "H", "E", "S", "W", "T"}
 
 
-def process_job(job, api_key, ssh_host):
+def process_job(job, api_key, ssh_host, smtp_cfg):
     """Process a single job. Returns (keep_in_registry, updated_job, disappearance_info).
 
     disappearance_info is None when keep_in_registry is True.
@@ -215,7 +209,8 @@ def process_job(job, api_key, ssh_host):
     Pings and emails for disappeared jobs are NOT sent here; the caller must
     write jobs.json first, then use disappearance_info to notify.
 
-    Raises subprocess.TimeoutExpired or SSHError if qstat SSH fails.
+    Raises SSHError if SSH connection fails.
+    Raises subprocess.TimeoutExpired if SSH/qstat times out.
     """
     name = job["name"]
     job_id = job["job_id"]
@@ -280,7 +275,7 @@ def process_job(job, api_key, ssh_host):
             )
             hc_ping(hc_id, "fail", stale_reason)
             if not job.get("notified_stale"):
-                notify(f"Job {name} stale", stale_reason)
+                notify(f"Job {name} stale", stale_reason, **smtp_cfg)
                 job["notified_stale"] = True
         else:
             log.info("Job %s is running and healthy: %s", name, detail)
@@ -309,6 +304,12 @@ def main():
             log.error("SSH_HOST not found in .env")
             sys.exit(1)
 
+        smtp_cfg = {
+            "smtp_user": env.get("SMTP_USER", ""),
+            "smtp_password": env.get("SMTP_PASSWORD", ""),
+            "smtp_to": env.get("SMTP_TO", ""),
+        }
+
         # Ensure master healthcheck exists
         master_hc_id = env.get("MASTER_HEALTHCHECK_ID")
         if not master_hc_id:
@@ -328,7 +329,7 @@ def main():
                 updated_jobs = []
                 for job in jobs:
                     try:
-                        keep, updated_job, disappearance_info = process_job(job, api_key, ssh_host)
+                        keep, updated_job, disappearance_info = process_job(job, api_key, ssh_host, smtp_cfg)
                         if keep:
                             updated_jobs.append(updated_job)
                         else:
@@ -352,7 +353,7 @@ def main():
         for info in pending_notifications:
             status = "success" if info["success"] else "fail"
             hc_ping(info["hc_id"], status, info["message"])
-            notify(info["subject"], info["message"])
+            notify(info["subject"], info["message"], **smtp_cfg)
             hc_delete(api_key, info["hc_id"])
 
         # Master healthcheck ping
