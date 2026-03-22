@@ -85,7 +85,7 @@ Each cron cycle, `check.py`:
 
 ## Dependencies
 
-- Python 3 (`claude` conda env)
+- Python 3
 - `requests`
 - SSH access to PBS host (configured via `SSH_HOST` in `.env`)
 - `~/notify.py`
