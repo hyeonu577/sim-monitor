@@ -8,11 +8,14 @@ import os
 import sys
 
 import requests
+from dotenv import load_dotenv
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 JOBS_PATH = os.path.join(SCRIPT_DIR, "jobs.json")
 LOCK_PATH = os.path.join(SCRIPT_DIR, ".jobs.json.lock")
 ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
+
+load_dotenv(ENV_PATH)
 
 HC_API_URL = "https://healthchecks.io/api/v3/checks/"
 HC_TIMEOUT = 10
@@ -73,20 +76,6 @@ def add_job(args):
         release_lock(lock_fh)
 
 
-def read_env():
-    """Parse .env file, return dict of KEY=VALUE pairs."""
-    env = {}
-    if not os.path.exists(ENV_PATH):
-        return env
-    with open(ENV_PATH) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            env[key.strip()] = value.strip()
-    return env
-
 
 def hc_delete(api_key, uuid):
     """Delete a healthcheck from healthchecks.io."""
@@ -119,8 +108,7 @@ def remove_job(args):
     # Delete healthcheck after releasing lock
     hc_id = removed[0].get("healthcheck_id")
     if hc_id:
-        env = read_env()
-        api_key = env.get("HEALTHCHECK_API_KEY")
+        api_key = os.environ.get("HEALTHCHECK_API_KEY")
         if api_key:
             hc_delete(api_key, hc_id)
         else:
@@ -142,8 +130,7 @@ def list_jobs(args):
 
 
 def list_channels(args):
-    env = read_env()
-    api_key = env.get("HEALTHCHECK_API_KEY")
+    api_key = os.environ.get("HEALTHCHECK_API_KEY")
     if not api_key:
         print("Error: HEALTHCHECK_API_KEY not found in .env", file=sys.stderr)
         sys.exit(1)

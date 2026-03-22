@@ -51,7 +51,7 @@ Add `touch $OUTPUT_DIR/SUCCESS` as the last line of your simulation run scripts.
 ### Add a job to monitor
 
 ```bash
-python /path/to/sim-monitor/add_job.py add \
+python /path/to/sim-monitor/manage_jobs.py add \
   --job 12345.pbs-host \
   --name my_sim \
   --output-dir /path/to/project/run_01/ \
@@ -65,19 +65,19 @@ python /path/to/sim-monitor/add_job.py add \
 ### List available notification channels
 
 ```bash
-python /path/to/sim-monitor/add_job.py list-channels
+python /path/to/sim-monitor/manage_jobs.py list-channels
 ```
 
 ### List monitored jobs
 
 ```bash
-python /path/to/sim-monitor/add_job.py list
+python /path/to/sim-monitor/manage_jobs.py list
 ```
 
 ### Remove a job
 
 ```bash
-python /path/to/sim-monitor/add_job.py remove my_sim
+python /path/to/sim-monitor/manage_jobs.py remove my_sim
 ```
 
 ## How it works
@@ -105,4 +105,5 @@ Each cron cycle, `check.py`:
 
 - Python 3
 - `requests`
+- `python-dotenv`
 - SSH access to PBS host (configured via `SSH_HOST` in `.env`)

@@ -12,6 +12,7 @@ import time
 import traceback
 
 import requests
+from dotenv import load_dotenv, set_key
 
 from mailer import send_email
 
@@ -19,6 +20,9 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ENV_PATH = os.path.join(SCRIPT_DIR, ".env")
 JOBS_PATH = os.path.join(SCRIPT_DIR, "jobs.json")
 LOCK_PATH = os.path.join(SCRIPT_DIR, ".jobs.json.lock")
+
+load_dotenv(ENV_PATH)
+
 HC_API_URL = "https://healthchecks.io/api/v3/checks/"
 HC_PING_URL = "https://hc-ping.com/"
 HC_TIMEOUT = 10  # seconds
@@ -28,28 +32,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 log = logging.getLogger(__name__)
-
-
-def read_env():
-    """Parse .env file, return dict of KEY=VALUE pairs."""
-    env = {}
-    if not os.path.exists(ENV_PATH):
-        return env
-    with open(ENV_PATH) as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            env[key.strip()] = value.strip()
-    return env
-
-
-def write_env(env):
-    """Write dict back to .env file, preserving KEY=VALUE format."""
-    with open(ENV_PATH, "w") as f:
-        for key, value in env.items():
-            f.write(f"{key}={value}\n")
 
 
 def hc_create_check(api_key, name, channels="*"):
@@ -292,31 +274,29 @@ def process_job(job, api_key, ssh_host, smtp_cfg):
 def main():
     master_hc_id = None
     try:
-        # Read .env
-        env = read_env()
-        api_key = env.get("HEALTHCHECK_API_KEY")
+        api_key = os.environ.get("HEALTHCHECK_API_KEY")
         if not api_key:
             log.error("HEALTHCHECK_API_KEY not found in .env")
             sys.exit(1)
 
-        ssh_host = env.get("SSH_HOST")
+        ssh_host = os.environ.get("SSH_HOST")
         if not ssh_host:
             log.error("SSH_HOST not found in .env")
             sys.exit(1)
 
         smtp_cfg = {
-            "smtp_user": env.get("SMTP_USER", ""),
-            "smtp_password": env.get("SMTP_PASSWORD", ""),
-            "smtp_to": env.get("SMTP_TO", ""),
+            "smtp_user": os.environ.get("SMTP_USER", ""),
+            "smtp_password": os.environ.get("SMTP_PASSWORD", ""),
+            "smtp_to": os.environ.get("SMTP_TO", ""),
         }
 
         # Ensure master healthcheck exists
-        master_hc_id = env.get("MASTER_HEALTHCHECK_ID")
+        master_hc_id = os.environ.get("MASTER_HEALTHCHECK_ID")
         if not master_hc_id:
             log.info("Creating master healthcheck")
             master_hc_id = hc_create_check(api_key, "sim-monitor-master")
-            env["MASTER_HEALTHCHECK_ID"] = master_hc_id
-            write_env(env)
+            set_key(ENV_PATH, "MASTER_HEALTHCHECK_ID", master_hc_id)
+            os.environ["MASTER_HEALTHCHECK_ID"] = master_hc_id
             log.info("Created master healthcheck: %s", master_hc_id)
 
         # Read and process jobs
