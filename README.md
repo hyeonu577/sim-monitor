@@ -56,7 +56,7 @@ python /path/to/sim-monitor/manage_jobs.py add \
   --name my_sim \
   --output-dir /path/to/project/run_01/ \
   --output-pattern "DD*" \
-  --stale-timeout 60 \
+  --stale-timeout 60 \  # minutes
   --channels "*"
 ```
 
