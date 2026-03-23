@@ -151,7 +151,9 @@ def query_pbs(job_id, ssh_host):
 def check_staleness(output_dir, output_pattern, stale_timeout):
     """Check if output files are stale. Returns (is_stale, latest_mtime_str)."""
     pattern = os.path.join(output_dir, output_pattern)
-    matches = glob.glob(pattern)
+    # Exclude symlinks — restart snapshots are symlinked from previous runs
+    # and have old mtimes that would trigger false stale alerts.
+    matches = [m for m in glob.glob(pattern) if not os.path.islink(m)]
     if not matches:
         # No output yet — not stale (job may have just started)
         return False, "no output files yet"
