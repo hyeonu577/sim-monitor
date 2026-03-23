@@ -44,7 +44,22 @@ SMTP_TO=recipient@example.com
 
 ### 4. Prepare your simulations
 
-Add `touch $OUTPUT_DIR/SUCCESS` as the last line of your simulation run scripts.
+Add a **conditional** SUCCESS marker at the end of your simulation run scripts so that
+`touch SUCCESS` only runs when the simulation exits cleanly:
+
+```bash
+set -o pipefail   # ensure pipe returns mpirun's exit code, not awk's
+
+mpirun -np 36 ./enzo.exe MyParams.enzo 2>&1 \
+  | awk '{ print strftime("[%Y-%m-%d %H:%M:%S]"), $0; fflush() }' > run_log
+
+if [ $? -eq 0 ]; then
+    touch $PBS_O_WORKDIR/SUCCESS
+fi
+```
+
+**Why `set -o pipefail`?** Without it, `$?` reflects the exit code of `awk` (the last
+command in the pipe), which is almost always 0 even if `mpirun` crashed.
 
 ## Usage
 
