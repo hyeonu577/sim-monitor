@@ -95,6 +95,8 @@ python /path/to/sim-monitor/manage_jobs.py list
 python /path/to/sim-monitor/manage_jobs.py remove my_sim
 ```
 
+This removes the job from the registry, deletes the PBS job via `qdel`, and deletes its healthcheck.
+
 ## How it works
 
 Each cron cycle, `check.py`:

@@ -5,6 +5,7 @@ import argparse
 import fcntl
 import json
 import os
+import subprocess
 import sys
 
 import requests
@@ -104,6 +105,26 @@ def remove_job(args):
         print(f"Removed job '{args.name}'")
     finally:
         release_lock(lock_fh)
+
+    # Delete PBS job
+    job_id = removed[0].get("job_id")
+    if job_id:
+        ssh_host = os.environ.get("SSH_HOST", "happiness")
+        try:
+            result = subprocess.run(
+                ["ssh", ssh_host, f"qdel {job_id}"],
+                timeout=30,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                print(f"Deleted PBS job {job_id}")
+            elif "Unknown Job Id" in result.stderr:
+                print(f"PBS job {job_id} is already finished or killed")
+            else:
+                print(f"Warning: qdel failed (exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+        except Exception as e:
+            print(f"Warning: failed to delete PBS job {job_id}: {e}", file=sys.stderr)
 
     # Delete healthcheck after releasing lock
     hc_id = removed[0].get("healthcheck_id")
