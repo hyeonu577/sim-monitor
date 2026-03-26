@@ -72,10 +72,13 @@ python /path/to/sim-monitor/manage_jobs.py add \
   --output-dir /path/to/project/run_01/ \
   --output-pattern "DD*" \
   --stale-timeout 60 \  # minutes
-  --channels "*"
+  --channels "*" \
+  --restart-snapshot DD0050  # optional: exclude snapshots up to and including this one
 ```
 
 `--channels` specifies which healthchecks.io notification integrations to attach (default: `"*"` for all). Use comma-separated channel UUIDs or names, or `"*"` for all configured integrations.
+
+`--restart-snapshot` (optional) specifies the restart snapshot name. All snapshots up to and including this one are excluded from staleness checks, since they originate from a previous run and have old modification times.
 
 ### List available notification channels
 
