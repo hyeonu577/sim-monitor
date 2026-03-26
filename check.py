@@ -177,7 +177,6 @@ def notify(subject, message, smtp_user, smtp_password, smtp_to):
     if not all([smtp_user, smtp_password, smtp_to]):
         log.warning("SMTP not configured, skipping email notification")
         return
-    subject = f"[Hercules Noti] {subject}"
     if not send_email(subject, message, smtp_user, smtp_password, smtp_to):
         log.error("Email notification failed: %s", subject)
 
