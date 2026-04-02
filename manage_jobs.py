@@ -70,6 +70,7 @@ def add_job(args):
             "notified_stale": False,
             "channels": args.channels,
             "restart_snapshot": args.restart_snapshot,
+            "work_dir": os.path.abspath(args.work_dir) if args.work_dir else None,
         }
         jobs.append(job)
         write_jobs(jobs)
@@ -182,6 +183,7 @@ def main():
     p_add.add_argument("--stale-timeout", type=int, required=True, help="Minutes without output before stale")
     p_add.add_argument("--channels", default="*", help="Healthchecks.io notification channels (comma-separated UUIDs/names, or '*' for all)")
     p_add.add_argument("--restart-snapshot", default=None, help="Name of restart snapshot to exclude from staleness checks (e.g., DD0050)")
+    p_add.add_argument("--work-dir", default=None, help="PBS working directory where SUCCESS marker is created (defaults to output-dir)")
 
     p_rm = sub.add_parser("remove", help="Remove a job from monitoring")
     p_rm.add_argument("name", help="Job name to remove")

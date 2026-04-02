@@ -167,9 +167,9 @@ def check_staleness(output_dir, output_pattern, stale_timeout, restart_snapshot=
     return False, f"last output at {mtime_str} ({age_minutes:.0f} min ago)"
 
 
-def check_success_marker(output_dir):
-    """Check if SUCCESS marker file exists."""
-    return os.path.exists(os.path.join(output_dir, "SUCCESS"))
+def check_success_marker(work_dir):
+    """Check if SUCCESS marker file exists in the given directory."""
+    return os.path.exists(os.path.join(work_dir, "SUCCESS"))
 
 
 def notify(subject, message, smtp_user, smtp_password, smtp_to):
@@ -214,7 +214,7 @@ def process_job(job, api_key, ssh_host, smtp_cfg):
     if state is None:
         # Job disappeared from qstat — return details without notifying yet.
         # The caller must write jobs.json BEFORE sending pings/emails.
-        if check_success_marker(job["output_dir"]):
+        if check_success_marker(job.get("work_dir") or job["output_dir"]):
             log.info("Job %s completed successfully", name)
             disappearance_info = {
                 "success": True,

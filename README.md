@@ -74,11 +74,14 @@ python /path/to/sim-monitor/manage_jobs.py add \
   --stale-timeout 60 \  # minutes
   --channels "*" \
   --restart-snapshot DD0050  # optional: exclude snapshots up to and including this one
+  --work-dir /path/to/project/  # optional: where SUCCESS marker is created (defaults to output-dir)
 ```
 
 `--channels` specifies which healthchecks.io notification integrations to attach (default: `"*"` for all). Use comma-separated channel UUIDs or names, or `"*"` for all configured integrations.
 
 `--restart-snapshot` (optional) specifies the restart snapshot name. All snapshots up to and including this one are excluded from staleness checks, since they originate from a previous run and have old modification times.
+
+`--work-dir` (optional) specifies the PBS working directory (`$PBS_O_WORKDIR`) where the SUCCESS marker is created. Use this when the output directory is a subdirectory of the working directory (e.g., `output/` inside the run directory). Defaults to `--output-dir` if not specified.
 
 ### List available notification channels
 
