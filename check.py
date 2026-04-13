@@ -149,22 +149,27 @@ def query_pbs(job_id, ssh_host):
 
 
 def check_staleness(output_dir, output_pattern, stale_timeout, restart_snapshot=None):
-    """Check if output files are stale. Returns (is_stale, latest_mtime_str)."""
+    """Check if output files are stale.
+
+    Returns (is_stale, detail, latest_name) where latest_name is the basename of
+    the newest matching file/dir, or None if there are no matches yet.
+    """
     pattern = os.path.join(output_dir, output_pattern)
     matches = glob.glob(pattern)
     if restart_snapshot:
         matches = [m for m in matches if os.path.basename(m) > restart_snapshot]
     if not matches:
         # No output yet — not stale (job may have just started)
-        return False, "no output files yet"
+        return False, "no output files yet", None
 
-    latest_mtime = max(os.path.getmtime(m) for m in matches)
+    latest_match = max(matches, key=os.path.getmtime)
+    latest_mtime = os.path.getmtime(latest_match)
+    latest_name = os.path.basename(latest_match)
     age_minutes = (time.time() - latest_mtime) / 60.0
 
     mtime_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(latest_mtime))
-    if age_minutes > stale_timeout:
-        return True, f"last output at {mtime_str} ({age_minutes:.0f} min ago)"
-    return False, f"last output at {mtime_str} ({age_minutes:.0f} min ago)"
+    detail = f"last output at {mtime_str} ({age_minutes:.0f} min ago)"
+    return age_minutes > stale_timeout, detail, latest_name
 
 
 def check_success_marker(work_dir):
@@ -241,12 +246,12 @@ def process_job(job, api_key, ssh_host, smtp_cfg):
     if state in PASSIVE_STATES:
         # Queued or other passive state — job is fine
         log.info("Job %s in state %s, sending success ping", name, state)
-        hc_ping(hc_id, "success")
+        hc_ping(hc_id, "success", f"Job in state {state}")
         return True, job, None
 
     if state == "R":
         # Running — check staleness
-        is_stale, detail = check_staleness(
+        is_stale, detail, latest_name = check_staleness(
             job["output_dir"], job["output_pattern"], job["stale_timeout"],
             restart_snapshot=job.get("restart_snapshot"),
         )
@@ -264,13 +269,17 @@ def process_job(job, api_key, ssh_host, smtp_cfg):
                 job["notified_stale"] = True
         else:
             log.info("Job %s is running and healthy: %s", name, detail)
-            hc_ping(hc_id, "success")
+            if latest_name:
+                body = f"Running — latest snapshot: {latest_name} ({detail})"
+            else:
+                body = f"Running — {detail}"
+            hc_ping(hc_id, "success", body)
             job["notified_stale"] = False
         return True, job, None
 
     # Unknown state — treat as passive
     log.info("Job %s in unknown state %s, sending success ping", name, state)
-    hc_ping(hc_id, "success")
+    hc_ping(hc_id, "success", f"Job in state {state}")
     return True, job, None
 
 
