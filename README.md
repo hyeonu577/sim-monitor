@@ -95,13 +95,21 @@ python /path/to/sim-monitor/manage_jobs.py list-channels
 python /path/to/sim-monitor/manage_jobs.py list
 ```
 
-### Remove a job
+### Remove a job from monitoring (keep PBS job running)
 
 ```bash
 python /path/to/sim-monitor/manage_jobs.py remove my_sim
 ```
 
-This removes the job from the registry, deletes the PBS job via `qdel`, and deletes its healthcheck.
+Drops the registry entry and the healthchecks.io check. The PBS job keeps running.
+
+### Kill the PBS job and remove from monitoring
+
+```bash
+python /path/to/sim-monitor/manage_jobs.py kill my_sim
+```
+
+Drops the registry entry, deletes the healthcheck, **and** runs `qdel` on the PBS job.
 
 ## How it works
 
