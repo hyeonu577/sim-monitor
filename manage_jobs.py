@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Add or remove jobs from the sim-monitor registry."""
+"""Manage the sim-monitor job registry.
+
+Subcommands:
+- `add`           — register a new job.
+- `list`          — list registered jobs.
+- `list-channels` — list healthchecks.io notification channels.
+- `remove`        — drop registry entry + healthcheck; leaves the PBS job running.
+- `kill`          — same as `remove`, then also runs qdel on the PBS job.
+"""
 
 import argparse
 import fcntl
@@ -94,48 +102,77 @@ def hc_delete(api_key, uuid):
         print(f"Warning: failed to delete healthcheck {uuid}: {e}", file=sys.stderr)
 
 
-def remove_job(args):
+def _drop_from_registry(name):
+    """Remove registry entry by name. Returns the removed dict, or exits if not found.
+
+    Caller is responsible for any post-removal cleanup (healthcheck delete, qdel).
+    """
     lock_fh = acquire_lock()
     try:
         jobs = read_jobs()
-        removed = [j for j in jobs if j["name"] == args.name]
-        remaining = [j for j in jobs if j["name"] != args.name]
+        removed = [j for j in jobs if j["name"] == name]
+        remaining = [j for j in jobs if j["name"] != name]
         if not removed:
-            print(f"Error: no job with name '{args.name}' found", file=sys.stderr)
+            print(f"Error: no job with name '{name}' found", file=sys.stderr)
             sys.exit(1)
         write_jobs(remaining)
-        print(f"Removed job '{args.name}'")
     finally:
         release_lock(lock_fh)
+    return removed[0]
 
-    # Delete PBS job
-    job_id = removed[0].get("job_id")
-    if job_id:
-        ssh_host = os.environ.get("SSH_HOST", "happiness")
-        try:
-            result = subprocess.run(
-                ["ssh", ssh_host, f"qdel {job_id}"],
-                timeout=30,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                print(f"Deleted PBS job {job_id}")
-            elif "Unknown Job Id" in result.stderr:
-                print(f"PBS job {job_id} is already finished or killed")
-            else:
-                print(f"Warning: qdel failed (exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
-        except Exception as e:
-            print(f"Warning: failed to delete PBS job {job_id}: {e}", file=sys.stderr)
 
-    # Delete healthcheck after releasing lock
-    hc_id = removed[0].get("healthcheck_id")
-    if hc_id:
-        api_key = os.environ.get("HEALTHCHECK_API_KEY")
-        if api_key:
-            hc_delete(api_key, hc_id)
+def _delete_healthcheck(entry):
+    """Delete the healthchecks.io check for this entry, if any. No-op if unset."""
+    hc_id = entry.get("healthcheck_id")
+    if not hc_id:
+        return
+    api_key = os.environ.get("HEALTHCHECK_API_KEY")
+    if api_key:
+        hc_delete(api_key, hc_id)
+    else:
+        print("Warning: HEALTHCHECK_API_KEY not found in .env, skipping healthcheck deletion", file=sys.stderr)
+
+
+def _qdel_job(entry):
+    """Run `qdel` on the PBS job over SSH. Non-fatal on failure (prints a warning)."""
+    job_id = entry.get("job_id")
+    if not job_id:
+        return
+    ssh_host = os.environ.get("SSH_HOST", "happiness")
+    try:
+        result = subprocess.run(
+            ["ssh", ssh_host, f"qdel {job_id}"],
+            timeout=30,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            print(f"Deleted PBS job {job_id}")
+        elif "Unknown Job Id" in result.stderr:
+            print(f"PBS job {job_id} is already finished or killed")
         else:
-            print("Warning: HEALTHCHECK_API_KEY not found in .env, skipping healthcheck deletion", file=sys.stderr)
+            print(f"Warning: qdel failed (exit {result.returncode}): {result.stderr.strip()}", file=sys.stderr)
+    except Exception as e:
+        print(f"Warning: failed to delete PBS job {job_id}: {e}", file=sys.stderr)
+
+
+def remove_job(args):
+    """Drop registry entry + delete healthcheck. Leaves the PBS job running."""
+    entry = _drop_from_registry(args.name)
+    job_id = entry.get("job_id") or "(unknown)"
+    print(
+        f"Removed job '{args.name}' from monitoring. "
+        f"PBS job {job_id} left running -- use 'kill' to also qdel."
+    )
+    _delete_healthcheck(entry)
+
+
+def kill_job(args):
+    """Drop registry entry + delete healthcheck + qdel the PBS job."""
+    entry = _drop_from_registry(args.name)
+    print(f"Removed job '{args.name}' from monitoring")
+    _delete_healthcheck(entry)
+    _qdel_job(entry)
 
 
 def list_jobs(args):
@@ -185,8 +222,17 @@ def main():
     p_add.add_argument("--restart-snapshot", default=None, help="Name of restart snapshot to exclude from staleness checks (e.g., DD0050)")
     p_add.add_argument("--work-dir", default=None, help="PBS working directory where SUCCESS marker is created (defaults to output-dir)")
 
-    p_rm = sub.add_parser("remove", help="Remove a job from monitoring")
+    p_rm = sub.add_parser(
+        "remove",
+        help="Remove a job from monitoring (drops registry + healthcheck; leaves PBS job running)",
+    )
     p_rm.add_argument("name", help="Job name to remove")
+
+    p_kill = sub.add_parser(
+        "kill",
+        help="Kill the PBS job and remove from monitoring (drops registry + healthcheck + qdel)",
+    )
+    p_kill.add_argument("name", help="Job name to kill")
 
     sub.add_parser("list", help="List all monitored jobs")
 
@@ -198,6 +244,8 @@ def main():
         add_job(args)
     elif args.command == "remove":
         remove_job(args)
+    elif args.command == "kill":
+        kill_job(args)
     elif args.command == "list":
         list_jobs(args)
     elif args.command == "list-channels":
