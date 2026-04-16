@@ -75,7 +75,6 @@ def add_job(args):
             "output_pattern": args.output_pattern,
             "stale_timeout": args.stale_timeout,
             "healthcheck_id": None,
-            "notified_stale": False,
             "channels": args.channels,
             "restart_snapshot": args.restart_snapshot,
             "work_dir": os.path.abspath(args.work_dir) if args.work_dir else None,

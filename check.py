@@ -264,9 +264,6 @@ def process_job(job, api_key, ssh_host, smtp_cfg):
                 f"Output dir: {job['output_dir']}"
             )
             hc_ping(hc_id, "fail", stale_reason)
-            if not job.get("notified_stale"):
-                notify(f"Job {name} stale", stale_reason, **smtp_cfg)
-                job["notified_stale"] = True
         else:
             log.info("Job %s is running and healthy: %s", name, detail)
             if latest_name:
@@ -274,7 +271,6 @@ def process_job(job, api_key, ssh_host, smtp_cfg):
             else:
                 body = f"Running — {detail}"
             hc_ping(hc_id, "success", body)
-            job["notified_stale"] = False
         return True, job, None
 
     # Unknown state — treat as passive
