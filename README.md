@@ -9,7 +9,7 @@ Cron-based PBS simulation monitor with [healthchecks.io](https://healthchecks.io
 - Detects jobs that disappear from the queue (completed or crashed)
 - Sends per-job health check pings to healthchecks.io
 - Sends a master health check ping to confirm the monitor itself is running
-- Emails notifications on state changes via Gmail SMTP
+- Emails notifications on job completion or crash via Gmail SMTP
 
 ## Setup
 
@@ -125,7 +125,7 @@ Each cron cycle, `check.py`:
 | State | Output | Action |
 |---|---|---|
 | Running | Fresh | Success ping |
-| Running | Stale | Failure ping + email (once) |
+| Running | Stale | Failure ping |
 | Queued | N/A | Success ping |
 | Disappeared | SUCCESS marker | Success ping + completed email, remove from registry |
 | Disappeared | No marker | Failure ping + crashed email, remove from registry |
