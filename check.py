@@ -114,28 +114,51 @@ def write_jobs(jobs):
         f.write("\n")
 
 
-class SSHError(Exception):
-    """Raised when SSH transport itself fails (not a qstat error)."""
+class TransientError(Exception):
+    """Raised when the cluster can't be queried this cycle, so the job's real
+    state is unknown (SSH transport failure OR a pbs_server communication
+    failure). The job must NOT be declared dead — the caller keeps it in the
+    registry and retries next cycle."""
+    pass
+
+
+class SSHError(TransientError):
+    """Transient failure specifically in the SSH transport layer."""
     pass
 
 
 def query_pbs(job_id, ssh_host):
     """Query PBS job state via SSH.
 
-    Returns (state, info_dict) or (None, {}) if job disappeared.
-    Raises SSHError if SSH connection itself fails.
+    Returns (state, info_dict), or (None, {}) only when qstat explicitly reports
+    the job id as unknown (the job genuinely left the queue).
+    Raises SSHError if the SSH transport itself fails, or TransientError if the
+    query fails for any other reason (e.g. pbs_server temporarily unreachable) —
+    in both cases the job's real state is unknown and it must not be declared dead.
+    Raises subprocess.TimeoutExpired if the SSH/qstat call exceeds its timeout.
     """
     cmd = ["ssh", ssh_host, f"qstat -f {job_id}"]
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
 
     if result.returncode != 0:
-        # Exit code 255 = SSH transport failure
-        # Also check stderr for SSH-specific error messages
         stderr = result.stderr.lower()
+        # Genuine "job left the queue": pbs_server explicitly reports it unknown
+        # (PBS Pro/Torque: exit 153, stderr "qstat: Unknown Job Id <id>"). This is
+        # a definitive PBS signal, so it takes precedence over the transport
+        # heuristics below (which key off generic substrings like "permission
+        # denied" that could otherwise collide with a real qstat message).
+        if result.returncode == 153 or "unknown job id" in stderr:
+            return None, {}
+        # SSH transport failure — ssh itself couldn't connect/authenticate.
         if result.returncode == 255 or "connection refused" in stderr or "no route to host" in stderr or "could not resolve" in stderr or "network is unreachable" in stderr or "permission denied" in stderr or "host key verification failed" in stderr:
-            raise SSHError(f"SSH failed (exit {result.returncode}): {result.stderr.strip()}")
-        # Otherwise, qstat itself failed — job has left the queue
-        return None, {}
+            raise SSHError(f"SSH transport failed (exit {result.returncode}): {result.stderr.strip()}")
+        # SSH succeeded but qstat failed for another reason (pbs_server
+        # overloaded/restarting, premature EOF, ...). The job's state is unknown,
+        # so do NOT declare it dead — treat as transient and retry next cycle.
+        raise TransientError(
+            f"qstat failed (exit {result.returncode}), job state unknown: "
+            f"{result.stderr.strip() or result.stdout.strip() or '(no output)'}"
+        )
 
     info = {}
     for line in result.stdout.splitlines():
@@ -145,6 +168,14 @@ def query_pbs(job_id, ssh_host):
                 info[key] = line.split("=", 1)[1].strip()
 
     state = info.get("job_state")
+    if state is None:
+        # qstat exited 0 but no job_state was found (empty or malformed output,
+        # e.g. a truncated/racy response). The job's real state is unknown, so do
+        # NOT let the caller read this as the job being gone — treat as transient.
+        raise TransientError(
+            f"qstat exited 0 but no job_state parsed for {job_id}; "
+            f"output: {result.stdout.strip()[:200] or '(empty)'}"
+        )
     return state, info
 
 
@@ -198,8 +229,8 @@ def process_job(job, api_key, ssh_host, smtp_cfg):
     Pings and emails for disappeared jobs are NOT sent here; the caller must
     write jobs.json first, then use disappearance_info to notify.
 
-    Raises SSHError if SSH connection fails.
-    Raises subprocess.TimeoutExpired if SSH/qstat times out.
+    Raises TransientError (incl. its SSHError subclass) if the cluster can't be
+    queried this cycle, or subprocess.TimeoutExpired if SSH/qstat times out.
     """
     name = job["name"]
     job_id = job["job_id"]
@@ -308,7 +339,7 @@ def main():
             log.info("Created master healthcheck: %s", master_hc_id)
 
         # Read and process jobs
-        ssh_failed = False
+        query_failed = False
         pending_notifications = []
         lock_fh = acquire_lock()
         try:
@@ -322,13 +353,12 @@ def main():
                             updated_jobs.append(updated_job)
                         else:
                             pending_notifications.append(disappearance_info)
-                    except SSHError as e:
-                        log.error("SSH failure querying job %s: %s", job["name"], e)
-                        ssh_failed = True
-                        updated_jobs.append(job)
-                    except subprocess.TimeoutExpired:
-                        log.error("SSH timeout querying job %s", job["name"])
-                        ssh_failed = True
+                    except (TransientError, subprocess.TimeoutExpired) as e:
+                        # SSH transport failure, pbs_server unreachable, or query
+                        # timeout — the job's state is unknown this cycle. Keep it
+                        # in the registry and retry; do NOT declare it dead.
+                        log.error("Transient failure querying job %s (state unknown, keeping): %s", job["name"], e)
+                        query_failed = True
                         updated_jobs.append(job)
 
                 write_jobs(updated_jobs)
@@ -345,9 +375,9 @@ def main():
             hc_delete(api_key, info["hc_id"])
 
         # Master healthcheck ping
-        if ssh_failed:
-            log.warning("SSH failure detected, sending master failure ping")
-            hc_ping(master_hc_id, "fail", f"SSH to {ssh_host} failed during this cycle")
+        if query_failed:
+            log.warning("Cluster query failure detected, sending master failure ping")
+            hc_ping(master_hc_id, "fail", f"Query to {ssh_host} failed during this cycle (SSH transport or pbs_server unreachable)")
         else:
             hc_ping(master_hc_id, "success")
 
