@@ -4,3 +4,4 @@ jobs.json
 check.log
 __pycache__/
 docs/
+tests/
