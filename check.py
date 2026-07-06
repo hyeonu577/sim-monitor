@@ -130,8 +130,9 @@ class SSHError(TransientError):
 def query_pbs(job_id, ssh_host):
     """Query PBS job state via SSH.
 
-    Returns (state, info_dict), or (None, {}) only when qstat explicitly reports
-    the job id as unknown (the job genuinely left the queue).
+    Returns (state, info_dict), or (None, {}) when qstat explicitly reports the
+    job as no longer in the queue — either an unknown job id, or a finished job
+    that has moved to PBS history (plain `qstat -f` exits 35, "Job has finished").
     Raises SSHError if the SSH transport itself fails, or TransientError if the
     query fails for any other reason (e.g. pbs_server temporarily unreachable) —
     in both cases the job's real state is unknown and it must not be declared dead.
