@@ -142,12 +142,18 @@ def query_pbs(job_id, ssh_host):
 
     if result.returncode != 0:
         stderr = result.stderr.lower()
-        # Genuine "job left the queue": pbs_server explicitly reports it unknown
-        # (PBS Pro/Torque: exit 153, stderr "qstat: Unknown Job Id <id>"). This is
-        # a definitive PBS signal, so it takes precedence over the transport
-        # heuristics below (which key off generic substrings like "permission
-        # denied" that could otherwise collide with a real qstat message).
-        if result.returncode == 153 or "unknown job id" in stderr:
+        # Genuine "job left the queue", two definitive PBS signals:
+        #   1. pbs_server reports the id unknown — the job is fully gone
+        #      (PBS Pro/Torque: exit 153, stderr "qstat: Unknown Job Id <id>").
+        #   2. the job finished and moved to history — plain `qstat -f <id>`
+        #      (no -x) then exits 35 with "Job has finished, use -x or -H".
+        # Both mean the job is no longer active in the queue, so they take
+        # precedence over the transport heuristics below (which key off generic
+        # substrings like "permission denied" that could otherwise collide with
+        # a real qstat message).
+        if (result.returncode in (35, 153)
+                or "unknown job id" in stderr
+                or "job has finished" in stderr):
             return None, {}
         # SSH transport failure — ssh itself couldn't connect/authenticate.
         if result.returncode == 255 or "connection refused" in stderr or "no route to host" in stderr or "could not resolve" in stderr or "network is unreachable" in stderr or "permission denied" in stderr or "host key verification failed" in stderr:
