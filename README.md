@@ -130,7 +130,10 @@ Each cron cycle, `check.py`:
 | Disappeared | SUCCESS marker | Success ping + completed email, remove from registry |
 | Disappeared | No marker | Failure ping + crashed email, remove from registry |
 
-4. Pings the master healthcheck (success if clean cycle, failure if SSH or other error)
+4. Pings the master healthcheck:
+   - clean cycle → success ping
+   - real error (email send failed, healthcheck delete failed, unhandled exception) → failure ping with details
+   - transient cluster-query failure only (SSH transport or pbs_server unreachable) → no ping at all; a one-off blip stays silent, and a persistent outage exceeds the check's grace period so healthchecks.io flags the missed pings on its own
 
 ## Dependencies
 

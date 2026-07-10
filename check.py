@@ -56,7 +56,10 @@ def hc_create_check(api_key, name, channels="*"):
 
 
 def hc_delete(api_key, uuid):
-    """Delete a healthcheck from healthchecks.io."""
+    """Delete a healthcheck from healthchecks.io.
+
+    Returns True on success, False on failure (logged, never raises).
+    """
     try:
         resp = requests.delete(
             HC_API_URL + uuid,
@@ -65,8 +68,10 @@ def hc_delete(api_key, uuid):
         )
         resp.raise_for_status()
         log.info("Deleted healthcheck %s", uuid)
+        return True
     except Exception as e:
         log.error("Failed to delete healthcheck %s: %s", uuid, e)
+        return False
 
 
 def hc_ping(uuid, status="success", body=""):
@@ -216,12 +221,57 @@ def check_success_marker(work_dir):
 
 
 def notify(subject, message, smtp_user, smtp_password, smtp_to):
-    """Send email notification. Logs errors but does not raise."""
+    """Send email notification. Logs errors but does not raise.
+
+    Returns True when the email went out (or SMTP is deliberately
+    unconfigured — a skip, not an error), False when the send failed.
+    """
     if not all([smtp_user, smtp_password, smtp_to]):
         log.warning("SMTP not configured, skipping email notification")
-        return
+        return True
     if not send_email(subject, message, smtp_user, smtp_password, smtp_to):
         log.error("Email notification failed: %s", subject)
+        return False
+    return True
+
+
+def send_notifications(pending_notifications, api_key, smtp_cfg):
+    """Ping, email, and delete the healthcheck for each disappeared job.
+
+    Returns a list of error strings for failures that must flip the master
+    check to fail — these notifications are one-shot (the job is already out
+    of the registry), so a silent failure would lose the alert forever.
+    The check is deleted even when the email fails; otherwise it lingers as
+    an orphan and its missed pings raise a second, misleading alert.
+    """
+    errors = []
+    for info in pending_notifications:
+        status = "success" if info["success"] else "fail"
+        hc_ping(info["hc_id"], status, info["message"])
+        if not notify(info["subject"], info["message"], **smtp_cfg):
+            errors.append(f"email notification failed: {info['subject']}")
+        if not hc_delete(api_key, info["hc_id"]):
+            errors.append(f"failed to delete healthcheck {info['hc_id']} ({info['subject']})")
+    return errors
+
+
+def send_master_ping(master_hc_id, query_failed, errors):
+    """End-of-cycle master ping policy.
+
+    - errors occurred → fail ping carrying the details (takes precedence over
+      a transient query failure in the same cycle);
+    - transient-only cycle → no ping at all: a one-off blip stays silent, and
+      a persistent outage runs past the check's grace period so healthchecks.io
+      flags the missed pings on its own;
+    - clean cycle → success ping.
+    """
+    if errors:
+        log.warning("%d error(s) this cycle, sending master failure ping", len(errors))
+        hc_ping(master_hc_id, "fail", "\n".join(errors))
+    elif query_failed:
+        log.warning("Transient cluster query failure, skipping master ping this cycle")
+    else:
+        hc_ping(master_hc_id, "success")
 
 
 PASSIVE_STATES = {"Q", "H", "E", "S", "W", "T"}
@@ -375,18 +425,9 @@ def main():
             release_lock(lock_fh)
 
         # Send pings/emails for disappeared jobs (jobs.json already updated above)
-        for info in pending_notifications:
-            status = "success" if info["success"] else "fail"
-            hc_ping(info["hc_id"], status, info["message"])
-            notify(info["subject"], info["message"], **smtp_cfg)
-            hc_delete(api_key, info["hc_id"])
+        errors = send_notifications(pending_notifications, api_key, smtp_cfg)
 
-        # Master healthcheck ping
-        if query_failed:
-            log.warning("Cluster query failure detected, sending master failure ping")
-            hc_ping(master_hc_id, "fail", f"Query to {ssh_host} failed during this cycle (SSH transport or pbs_server unreachable)")
-        else:
-            hc_ping(master_hc_id, "success")
+        send_master_ping(master_hc_id, query_failed, errors)
 
     except Exception:
         log.error("Unhandled exception:\n%s", traceback.format_exc())
